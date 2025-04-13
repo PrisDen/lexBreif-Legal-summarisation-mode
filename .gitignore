@@ -1,0 +1,14 @@
+venv/
+__pycache__/
+*.pyc
+.DS_Store
+uploads/
+reports/
+.env
+trained_model/
+test_results/
+*.db
+legal_data/
+*.safetensors
+*.pt
+*.pth
