@@ -28,37 +28,22 @@ document.addEventListener('DOMContentLoaded', () => {
     });
 
     // Handle drag and drop
-    uploadBox.addEventListener('click', (e) => {
-        if (e.target === uploadBox || e.target.closest('.upload-box')) {
-            e.preventDefault();
-            e.stopPropagation();
-            fileInput.click();
-        }
-    });
-
-    // Handle drag and drop events
     uploadBox.addEventListener('dragover', (e) => {
         e.preventDefault();
         e.stopPropagation();
         uploadBox.classList.add('dragover');
-        uploadBox.style.borderColor = '#3498db';
-        uploadBox.style.backgroundColor = 'rgba(52, 152, 219, 0.05)';
     });
 
     uploadBox.addEventListener('dragleave', (e) => {
         e.preventDefault();
         e.stopPropagation();
         uploadBox.classList.remove('dragover');
-        uploadBox.style.borderColor = '#3498db';
-        uploadBox.style.backgroundColor = 'transparent';
     });
 
     uploadBox.addEventListener('drop', (e) => {
         e.preventDefault();
         e.stopPropagation();
         uploadBox.classList.remove('dragover');
-        uploadBox.style.borderColor = '#3498db';
-        uploadBox.style.backgroundColor = 'transparent';
 
         if (e.dataTransfer.files.length > 0) {
             fileInput.files = e.dataTransfer.files;
@@ -79,12 +64,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Handle download button
     downloadBtn.addEventListener('click', () => {
         if (currentData && currentData.report_url) {
-            const link = document.createElement('a');
-            link.href = currentData.report_url;
-            link.download = 'legal_summary_report.pdf';
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
+            window.open(currentData.report_url, '_blank');
         } else {
             showError('No PDF report available');
         }
