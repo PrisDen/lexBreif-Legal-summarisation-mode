@@ -13,6 +13,7 @@ import PyPDF2
 import docx
 import re
 from transformers import pipeline, AutoTokenizer, AutoModelForSeq2SeqLM
+from collections import defaultdict
 
 app = Flask(__name__, 
             static_folder='static',
@@ -50,7 +51,30 @@ for folder in [UPLOAD_FOLDER, REPORTS_FOLDER]:
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['REPORTS_FOLDER'] = REPORTS_FOLDER
-app.config['MAX_CONTENT_LENGTH'] = 10 * 1024 * 1024  # 10MB max file size
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max file size
+
+INDIAN_LAW_ARTICLES = {
+    'Article 17': {
+        'title': 'Abolition of Untouchability',
+        'description': 'Article 17 of the Indian Constitution abolishes untouchability in all its forms and its practice is forbidden. Enforcing any disability arising from untouchability is a punishable offense.',
+        'keywords': ['untouchability', 'caste discrimination', 'social discrimination', 'dalit', 'scheduled caste']
+    },
+    'Article 21': {
+        'title': 'Protection of Life and Personal Liberty',
+        'description': 'No person shall be deprived of his life or personal liberty except according to procedure established by law.',
+        'keywords': ['life', 'liberty', 'personal freedom', 'fundamental rights', 'human rights']
+    },
+    'Article 14': {
+        'title': 'Equality Before Law',
+        'description': 'The State shall not deny to any person equality before the law or the equal protection of the laws within the territory of India.',
+        'keywords': ['equality', 'equal protection', 'discrimination', 'equal rights']
+    },
+    'Article 19': {
+        'title': 'Protection of Certain Rights Regarding Freedom of Speech',
+        'description': 'All citizens shall have the right to freedom of speech and expression, to assemble peaceably and without arms, to form associations or unions, to move freely throughout the territory of India, to reside and settle in any part of the territory of India, and to practice any profession, or to carry on any occupation, trade or business.',
+        'keywords': ['freedom of speech', 'expression', 'assembly', 'association', 'movement', 'residence', 'profession']
+    }
+}
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -78,11 +102,28 @@ def extract_dates(text):
         r'(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}'  # Month DD, YYYY
     ]
     
-    dates = []
+    dates_with_context = []
     for pattern in date_patterns:
-        dates.extend(re.findall(pattern, text))
+        for match in re.finditer(pattern, text):
+            date = match.group()
+            # Get context (2 sentences before and after the date)
+            start = max(0, text.rfind('.', 0, match.start()) + 1)
+            end = text.find('.', match.end())
+            if end == -1:
+                end = len(text)
+            context = text[start:end].strip()
+            dates_with_context.append({
+                'date': date,
+                'context': context
+            })
     
-    return list(set(dates))  # Remove duplicates
+    # Remove duplicates based on date
+    unique_dates = {}
+    for item in dates_with_context:
+        if item['date'] not in unique_dates:
+            unique_dates[item['date']] = item['context']
+    
+    return [{'date': date, 'context': context} for date, context in unique_dates.items()]
 
 def classify_importance(text):
     # Keywords for different importance levels
@@ -116,6 +157,38 @@ def classify_importance(text):
         importance[key] = importance[key][:5]  # Keep only top 5 items
     
     return importance
+
+def suggest_law_articles(text):
+    try:
+        # Load law articles from JSON file
+        with open('data/indian_law_articles.json', 'r') as f:
+            law_articles = json.load(f)['articles']
+        
+        # Convert text to lowercase for case-insensitive matching
+        text_lower = text.lower()
+        
+        # Score each article based on keyword matches
+        scored_articles = []
+        for article in law_articles:
+            score = 0
+            for keyword in article['keywords']:
+                if keyword.lower() in text_lower:
+                    score += 1
+            
+            if score > 0:
+                scored_articles.append({
+                    'article': article['article'],
+                    'title': article['title'],
+                    'description': article['description'],
+                    'score': score
+                })
+        
+        # Sort articles by score and return top 3
+        scored_articles.sort(key=lambda x: x['score'], reverse=True)
+        return [article for article in scored_articles[:3]]
+    except Exception as e:
+        print(f"Error suggesting law articles: {str(e)}")
+        return []
 
 def process_document(file_path):
     # Extract text based on file type
@@ -153,8 +226,11 @@ def process_document(file_path):
         sentences = text.split('.')[:5]  # First 5 sentences
         final_summary = '. '.join(sentences) + '.'
     
-    # Extract dates
+    # Extract dates with context
     dates = extract_dates(text)
+    
+    # Suggest relevant law articles
+    suggested_articles = suggest_law_articles(text)
     
     # Classify importance of content
     importance = classify_importance(text)
@@ -162,7 +238,8 @@ def process_document(file_path):
     return {
         'summary': final_summary,
         'dates': dates,
-        'importance': importance
+        'importance': importance,
+        'suggested_articles': suggested_articles
     }
 
 def create_response(data=None, error=None, status=200):
@@ -174,119 +251,174 @@ def create_response(data=None, error=None, status=200):
     return jsonify(response), status
 
 def generate_pdf_report(data, original_filename):
-    # Create a unique filename for the report
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    report_filename = f"legal_summary_report_{timestamp}.pdf"
-    report_path = os.path.join(app.config['REPORTS_FOLDER'], report_filename)
-    
-    # Create the PDF document
-    doc = SimpleDocTemplate(
-        report_path,
-        pagesize=letter,
-        rightMargin=72,
-        leftMargin=72,
-        topMargin=72,
-        bottomMargin=72
-    )
-    
-    # Styles
-    styles = getSampleStyleSheet()
-    title_style = ParagraphStyle(
-        'CustomTitle',
-        parent=styles['Heading1'],
-        fontSize=24,
-        spaceAfter=30,
-        textColor=colors.HexColor('#2c3e50')
-    )
-    heading_style = ParagraphStyle(
-        'CustomHeading',
-        parent=styles['Heading2'],
-        fontSize=16,
-        spaceAfter=12,
-        textColor=colors.HexColor('#34495e')
-    )
-    body_style = ParagraphStyle(
-        'CustomBody',
-        parent=styles['Normal'],
-        fontSize=12,
-        spaceAfter=12
-    )
-    
-    # Build the document content
-    content = []
-    
-    # Title
-    content.append(Paragraph("Legal Document Summary Report", title_style))
-    content.append(Paragraph(f"Original Document: {original_filename}", styles['Italic']))
-    content.append(Paragraph(f"Generated on: {datetime.now().strftime('%B %d, %Y %H:%M:%S')}", styles['Italic']))
-    content.append(Spacer(1, 20))
-    
-    # Summary Section
-    content.append(Paragraph("Document Summary", heading_style))
-    content.append(Paragraph(data['summary'], body_style))
-    content.append(Spacer(1, 20))
-    
-    # Important Dates Section
-    content.append(Paragraph("Important Dates", heading_style))
-    if data['dates']:
-        dates_list = ListFlowable(
-            [ListItem(Paragraph(date, body_style)) for date in data['dates']],
-            bulletType='bullet',
+    try:
+        # Create a unique filename for the report
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        report_filename = f"legal_summary_report_{timestamp}.pdf"
+        report_path = os.path.join(app.config['REPORTS_FOLDER'], report_filename)
+        
+        # Create the PDF document with better margins
+        doc = SimpleDocTemplate(
+            report_path,
+            pagesize=letter,
+            rightMargin=50,
+            leftMargin=50,
+            topMargin=50,
+            bottomMargin=50
+        )
+        
+        # Custom styles
+        styles = getSampleStyleSheet()
+        
+        # Title style
+        title_style = ParagraphStyle(
+            'CustomTitle',
+            parent=styles['Heading1'],
+            fontSize=24,
+            spaceAfter=30,
+            textColor=colors.HexColor('#2c3e50'),
+            alignment=1,  # Center alignment
+            fontName='Helvetica-Bold'
+        )
+        
+        # Subtitle style
+        subtitle_style = ParagraphStyle(
+            'CustomSubtitle',
+            parent=styles['Normal'],
+            fontSize=12,
+            spaceAfter=20,
+            textColor=colors.HexColor('#7f8c8d'),
+            alignment=1
+        )
+        
+        # Section header style
+        section_style = ParagraphStyle(
+            'CustomSection',
+            parent=styles['Heading2'],
+            fontSize=16,
+            spaceAfter=15,
+            spaceBefore=20,
+            textColor=colors.HexColor('#34495e'),
+            fontName='Helvetica-Bold',
+            leftIndent=10
+        )
+        
+        # Content style
+        content_style = ParagraphStyle(
+            'CustomContent',
+            parent=styles['Normal'],
+            fontSize=11,
+            spaceAfter=12,
+            textColor=colors.HexColor('#2c3e50'),
+            leading=14
+        )
+        
+        # Date style
+        date_style = ParagraphStyle(
+            'CustomDate',
+            parent=content_style,
+            fontSize=12,
+            textColor=colors.HexColor('#3498db'),
+            fontName='Helvetica-Bold'
+        )
+        
+        # Context style
+        context_style = ParagraphStyle(
+            'CustomContext',
+            parent=content_style,
+            fontSize=10,
+            textColor=colors.HexColor('#7f8c8d'),
             leftIndent=20
         )
-        content.append(dates_list)
-    else:
-        content.append(Paragraph("No important dates found.", body_style))
-    content.append(Spacer(1, 20))
-    
-    # Key Information Sections
-    content.append(Paragraph("Key Information", heading_style))
-    
-    # High Priority
-    content.append(Paragraph("Very Important", ParagraphStyle(
-        'Priority',
-        parent=body_style,
-        textColor=colors.HexColor('#c0392b')
-    )))
-    if data['importance']['high']:
-        high_list = ListFlowable(
-            [ListItem(Paragraph(item, body_style)) for item in data['importance']['high']],
-            bulletType='bullet',
-            leftIndent=20
-        )
-        content.append(high_list)
-    
-    # Medium Priority
-    content.append(Paragraph("Important", ParagraphStyle(
-        'Priority',
-        parent=body_style,
-        textColor=colors.HexColor('#d35400')
-    )))
-    if data['importance']['medium']:
-        medium_list = ListFlowable(
-            [ListItem(Paragraph(item, body_style)) for item in data['importance']['medium']],
-            bulletType='bullet',
-            leftIndent=20
-        )
-        content.append(medium_list)
-    
-    # Low Priority
-    content.append(Paragraph("Additional Information", ParagraphStyle(
-        'Priority',
-        parent=body_style,
-        textColor=colors.HexColor('#7f8c8d')
-    )))
-    if data['importance']['low']:
-        low_list = ListFlowable(
-            [ListItem(Paragraph(item, body_style)) for item in data['importance']['low']],
-            bulletType='bullet',
-            leftIndent=20
-        )
-        content.append(low_list)
-    
-    # Build the PDF
-    doc.build(content)
-    return report_filename
+        
+        # Build the document content
+        content = []
+        
+        # Title and metadata
+        content.append(Paragraph("Legal Document Summary Report", title_style))
+        content.append(Paragraph(f"Original Document: {original_filename}", subtitle_style))
+        content.append(Paragraph(f"Generated on: {datetime.now().strftime('%B %d, %Y %H:%M:%S')}", subtitle_style))
+        content.append(Spacer(1, 30))
+        
+        # Summary Section
+        content.append(Paragraph("Document Summary", section_style))
+        content.append(Paragraph(data.get('summary', 'No summary available'), content_style))
+        content.append(Spacer(1, 20))
+        
+        # Important Dates Section
+        content.append(Paragraph("Important Dates", section_style))
+        if data.get('dates'):
+            for date in data['dates']:
+                content.append(Paragraph(date.get('date', ''), date_style))
+                content.append(Paragraph(date.get('context', ''), context_style))
+                content.append(Spacer(1, 10))
+        else:
+            content.append(Paragraph("No important dates found.", content_style))
+        content.append(Spacer(1, 20))
+        
+        # Key Information Sections
+        content.append(Paragraph("Key Information", section_style))
+        
+        # High Priority
+        content.append(Paragraph("Critical Information", ParagraphStyle(
+            'Priority',
+            parent=content_style,
+            textColor=colors.HexColor('#c0392b'),
+            fontName='Helvetica-Bold'
+        )))
+        if data.get('importance', {}).get('high'):
+            for item in data['importance']['high']:
+                content.append(Paragraph(f"• {item}", content_style))
+        content.append(Spacer(1, 10))
+        
+        # Medium Priority
+        content.append(Paragraph("Important Information", ParagraphStyle(
+            'Priority',
+            parent=content_style,
+            textColor=colors.HexColor('#d35400'),
+            fontName='Helvetica-Bold'
+        )))
+        if data.get('importance', {}).get('medium'):
+            for item in data['importance']['medium']:
+                content.append(Paragraph(f"• {item}", content_style))
+        content.append(Spacer(1, 10))
+        
+        # Low Priority
+        content.append(Paragraph("Additional Context", ParagraphStyle(
+            'Priority',
+            parent=content_style,
+            textColor=colors.HexColor('#7f8c8d'),
+            fontName='Helvetica-Bold'
+        )))
+        if data.get('importance', {}).get('low'):
+            for item in data['importance']['low']:
+                content.append(Paragraph(f"• {item}", content_style))
+        content.append(Spacer(1, 20))
+        
+        # Law Articles Section
+        content.append(Paragraph("Relevant Indian Law Articles", section_style))
+        if data.get('suggested_articles'):
+            for article in data['suggested_articles']:
+                content.append(Paragraph(
+                    f"{article.get('article', '')} - {article.get('title', '')}",
+                    ParagraphStyle(
+                        'ArticleTitle',
+                        parent=content_style,
+                        textColor=colors.HexColor('#2c3e50'),
+                        fontName='Helvetica-Bold'
+                    )
+                ))
+                content.append(Paragraph(article.get('description', ''), content_style))
+                content.append(Spacer(1, 10))
+        else:
+            content.append(Paragraph("No relevant law articles found.", content_style))
+        
+        # Build the PDF
+        doc.build(content)
+        return report_filename
+    except Exception as e:
+        print(f"Error generating PDF report: {str(e)}")
+        return None
 
 @app.route('/')
 def index():
@@ -318,28 +450,30 @@ def summarize():
         
         # Save the file temporarily
         filename = secure_filename(file.filename)
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
+        file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(file_path)
         
+        # Process the document
+        result = process_document(file_path)
+        
+        # Generate PDF report
+        report_filename = generate_pdf_report(result, filename)
+        if report_filename:
+            result['report_url'] = f'/reports/{report_filename}'
+        else:
+            print("Warning: PDF report generation failed")
+        
+        # Clean up the uploaded file
         try:
-            # Process the document
-            result_data = process_document(filepath)
-            
-            # Generate PDF report
-            report_filename = generate_pdf_report(result_data, filename)
-            
-            # Add the report URL to the response
-            result_data['report_url'] = f'/reports/{report_filename}'
-            
-            return create_response(data=result_data)
-            
-        finally:
-            # Clean up the uploaded file
-            if os.path.exists(filepath):
-                os.remove(filepath)
+            os.remove(file_path)
+        except:
+            pass
+        
+        return create_response(data=result)
         
     except Exception as e:
+        print(f"Error processing document: {str(e)}")
         return create_response(error=str(e), status=500)
 
 if __name__ == '__main__':
-    app.run(debug=True, port=5001) 
+    app.run(host='127.0.0.1', port=5001, debug=True) 

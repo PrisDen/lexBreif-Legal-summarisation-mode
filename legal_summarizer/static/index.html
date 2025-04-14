@@ -21,10 +21,10 @@
                     <h2>Drag & Drop or Click to Upload</h2>
                     <p>Supported formats: PDF, DOCX, TXT</p>
                     <input type="file" id="fileInput" accept=".pdf,.docx,.txt" style="display: none;">
+                    <button class="upload-btn" id="uploadBtn">
+                        <i class="fas fa-upload"></i> Choose File
+                    </button>
                 </div>
-                <button type="button" class="upload-btn" id="uploadBtn">
-                    <i class="fas fa-upload"></i> Choose File
-                </button>
             </section>
 
             <div class="loading-overlay" id="loadingOverlay" style="display: none;">
@@ -42,9 +42,9 @@
                         <button class="copy-btn" id="copySummaryBtn">
                             <i class="fas fa-copy"></i> Copy Summary
                         </button>
-                        <a class="download-btn" id="downloadBtn" style="display: none;">
+                        <button class="download-btn" id="downloadBtn" style="display: none;">
                             <i class="fas fa-download"></i> Download PDF Report
-                        </a>
+                        </button>
                     </div>
                 </div>
 
@@ -68,6 +68,11 @@
                             </button>
                         </div>
                         <div class="importance-content" id="importanceContent"></div>
+                    </div>
+
+                    <div class="law-articles-section detail-card">
+                        <h2><i class="fas fa-gavel"></i> Relevant Indian Law Articles</h2>
+                        <div id="lawArticlesList" class="law-articles-list"></div>
                     </div>
                 </div>
             </section>

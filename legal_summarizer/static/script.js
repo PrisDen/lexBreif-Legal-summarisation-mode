@@ -13,13 +13,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
     let currentData = null;
 
-    // Handle drag and drop
-    uploadBox.addEventListener('click', (e) => {
-        if (e.target === uploadBox || e.target.closest('.upload-box')) {
-            e.preventDefault();
-            e.stopPropagation();
-            fileInput.click();
-        }
+    // Handle upload button click
+    uploadBtn.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        fileInput.click();
     });
 
     // Handle file input change
@@ -29,13 +27,14 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 
-    // Handle upload button click
-    if (uploadBtn) {
-        uploadBtn.onclick = (e) => {
+    // Handle drag and drop
+    uploadBox.addEventListener('click', (e) => {
+        if (e.target === uploadBox || e.target.closest('.upload-box')) {
             e.preventDefault();
+            e.stopPropagation();
             fileInput.click();
-        };
-    }
+        }
+    });
 
     // Handle drag and drop events
     uploadBox.addEventListener('dragover', (e) => {
@@ -50,19 +49,19 @@ document.addEventListener('DOMContentLoaded', () => {
         e.preventDefault();
         e.stopPropagation();
         uploadBox.classList.remove('dragover');
-        uploadBox.style.borderColor = '';
-        uploadBox.style.backgroundColor = '';
+        uploadBox.style.borderColor = '#3498db';
+        uploadBox.style.backgroundColor = 'transparent';
     });
 
     uploadBox.addEventListener('drop', (e) => {
         e.preventDefault();
         e.stopPropagation();
         uploadBox.classList.remove('dragover');
-        uploadBox.style.borderColor = '';
-        uploadBox.style.backgroundColor = '';
-        const files = e.dataTransfer.files;
-        if (files.length) {
-            fileInput.files = files;
+        uploadBox.style.borderColor = '#3498db';
+        uploadBox.style.backgroundColor = 'transparent';
+
+        if (e.dataTransfer.files.length > 0) {
+            fileInput.files = e.dataTransfer.files;
             handleFileUpload();
         }
     });
@@ -74,6 +73,20 @@ document.addEventListener('DOMContentLoaded', () => {
             showSuccess('Summary copied to clipboard!');
         } catch (err) {
             showError('Failed to copy summary');
+        }
+    });
+
+    // Handle download button
+    downloadBtn.addEventListener('click', () => {
+        if (currentData && currentData.report_url) {
+            const link = document.createElement('a');
+            link.href = currentData.report_url;
+            link.download = 'legal_summary_report.pdf';
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        } else {
+            showError('No PDF report available');
         }
     });
 
@@ -98,90 +111,141 @@ document.addEventListener('DOMContentLoaded', () => {
             return;
         }
 
-        // Validate file size (max 10MB)
-        const maxSize = 10 * 1024 * 1024; // 10MB
+        // Validate file size (max 16MB)
+        const maxSize = 16 * 1024 * 1024; // 16MB
         if (file.size > maxSize) {
-            showError('File size exceeds 10MB limit');
+            showError('File size exceeds 16MB limit');
             return;
         }
 
         // Show loading overlay with animation
         loadingOverlay.style.display = 'flex';
-        setTimeout(() => loadingOverlay.style.opacity = '1', 10);
-        resultsSection.style.display = 'none';
-
-        const formData = new FormData();
-        formData.append('document', file);
+        loadingOverlay.querySelector('p').textContent = 'Processing your document...';
 
         try {
-            const response = await fetch('http://127.0.0.1:5001/summarize', {
+            const formData = new FormData();
+            formData.append('document', file);
+
+            const response = await fetch('/summarize', {
                 method: 'POST',
                 body: formData
             });
 
+            const data = await response.json();
+
             if (!response.ok) {
-                throw new Error(`HTTP error! status: ${response.status}`);
+                throw new Error(data.error || 'Failed to process document');
             }
 
-            const result = await response.json();
-
-            if (!result.success) {
-                throw new Error(result.error || 'Failed to process document');
+            if (!data.success) {
+                throw new Error(data.error || 'Failed to process document');
             }
 
-            currentData = result.data;
-            displayResults(result.data);
+            // Store the data and display results
+            currentData = data.data;
+            displayResults(currentData);
+            showSuccess('Document processed successfully!');
         } catch (error) {
             console.error('Error:', error);
-            showError(error.message || 'An error occurred while processing the document. Please try again.');
+            showError(error.message || 'An error occurred while processing your document');
         } finally {
-            // Hide loading overlay with animation
-            loadingOverlay.style.opacity = '0';
-            setTimeout(() => loadingOverlay.style.display = 'none', 300);
+            loadingOverlay.style.display = 'none';
         }
     }
 
     function displayResults(data) {
         if (!data) {
-            showError('No data received from server');
+            console.error('No data received from server');
             return;
         }
 
         // Update summary
+        const summaryContent = document.getElementById('summaryContent');
         summaryContent.textContent = data.summary || 'No summary available';
 
         // Update dates
+        const datesList = document.getElementById('datesList');
         datesList.innerHTML = '';
         if (data.dates && data.dates.length > 0) {
             data.dates.forEach(date => {
                 const li = document.createElement('li');
-                li.innerHTML = `<i class="fas fa-calendar"></i> ${date}`;
+                li.className = 'date-item';
+                li.innerHTML = `
+                    <i class="fas fa-calendar-alt"></i>
+                    <div class="date-content">
+                        <span class="date-value">${date.date}</span>
+                        <span class="date-context">${date.context}</span>
+                    </div>
+                `;
                 datesList.appendChild(li);
             });
         } else {
             const li = document.createElement('li');
-            li.innerHTML = '<i class="fas fa-info-circle"></i> No dates found';
+            li.className = 'date-item';
+            li.innerHTML = '<i class="fas fa-info-circle"></i> No important dates found';
             datesList.appendChild(li);
         }
 
-        // Update importance content
-        updateImportanceContent('very-important');
+        // Update importance
+        const importanceContent = document.getElementById('importanceContent');
+        importanceContent.innerHTML = '';
+        if (data.importance) {
+            const importanceLevels = ['high', 'medium', 'low'];
+            importanceLevels.forEach(level => {
+                if (data.importance[level] && data.importance[level].length > 0) {
+                    const ul = document.createElement('ul');
+                    data.importance[level].forEach(item => {
+                        const li = document.createElement('li');
+                        li.innerHTML = `<i class="fas fa-${level === 'high' ? 'exclamation-circle' : level === 'medium' ? 'info-circle' : 'comment'}"></i> ${item}`;
+                        ul.appendChild(li);
+                    });
+                    importanceContent.appendChild(ul);
+                }
+            });
+        }
+
+        // Update law articles
+        const lawArticlesList = document.getElementById('lawArticlesList');
+        lawArticlesList.innerHTML = '';
+        if (data.suggested_articles && data.suggested_articles.length > 0) {
+            data.suggested_articles.forEach(article => {
+                const articleDiv = document.createElement('div');
+                articleDiv.className = 'law-article-item';
+                articleDiv.innerHTML = `
+                    <div class="law-article-header">
+                        <i class="fas fa-gavel"></i>
+                        <span class="law-article-title">${article.article} - ${article.title}</span>
+                    </div>
+                    <div class="law-article-description">${article.description}</div>
+                `;
+                lawArticlesList.appendChild(articleDiv);
+            });
+        } else {
+            const articleDiv = document.createElement('div');
+            articleDiv.className = 'law-article-item';
+            articleDiv.innerHTML = '<i class="fas fa-info-circle"></i> No relevant law articles found';
+            lawArticlesList.appendChild(articleDiv);
+        }
 
         // Update download button
+        const downloadBtn = document.getElementById('downloadBtn');
         if (data.report_url) {
-            downloadBtn.href = data.report_url;
             downloadBtn.style.display = 'inline-flex';
+            downloadBtn.style.visibility = 'visible';
         } else {
             downloadBtn.style.display = 'none';
+            downloadBtn.style.visibility = 'hidden';
         }
 
         // Show results section with animation
         resultsSection.style.display = 'block';
         setTimeout(() => {
-            resultsSection.classList.add('visible');
-            // Scroll to results with smooth animation
-            resultsSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        }, 10);
+            resultsSection.style.opacity = '1';
+            resultsSection.style.transform = 'translateY(0)';
+        }, 100);
+
+        // Scroll to results
+        resultsSection.scrollIntoView({ behavior: 'smooth' });
     }
 
     function updateImportanceContent(importance) {
@@ -217,40 +281,24 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     function showError(message) {
-        showNotification(message, 'error');
+        const notification = document.createElement('div');
+        notification.className = 'notification error';
+        notification.innerHTML = `
+            <i class="fas fa-exclamation-circle"></i>
+            <span>${message}</span>
+        `;
+        document.body.appendChild(notification);
+        setTimeout(() => notification.remove(), 5000);
     }
 
     function showSuccess(message) {
-        showNotification(message, 'success');
-    }
-
-    function showNotification(message, type) {
-        // Create notification element if it doesn't exist
-        let notificationElement = document.querySelector('.notification');
-        if (!notificationElement) {
-            notificationElement = document.createElement('div');
-            notificationElement.className = 'notification';
-            document.querySelector('.upload-section').appendChild(notificationElement);
-        }
-
-        // Set notification style based on type
-        notificationElement.className = `notification ${type}`;
-        const icon = type === 'error' ? 'exclamation-circle' : 'check-circle';
-        notificationElement.innerHTML = `<i class="fas fa-${icon}"></i> ${message}`;
-
-        // Show notification with animation
-        notificationElement.style.display = 'flex';
-        notificationElement.style.opacity = '0';
-        setTimeout(() => {
-            notificationElement.style.opacity = '1';
-        }, 10);
-
-        // Hide notification after delay
-        setTimeout(() => {
-            notificationElement.style.opacity = '0';
-            setTimeout(() => {
-                notificationElement.style.display = 'none';
-            }, 300);
-        }, 5000);
+        const notification = document.createElement('div');
+        notification.className = 'notification success';
+        notification.innerHTML = `
+            <i class="fas fa-check-circle"></i>
+            <span>${message}</span>
+        `;
+        document.body.appendChild(notification);
+        setTimeout(() => notification.remove(), 5000);
     }
 }); 
